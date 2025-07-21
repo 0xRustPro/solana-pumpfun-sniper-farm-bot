@@ -116,7 +116,7 @@ pub async fn main() -> CarbonResult<()> {
         .datasource(helius_laserstream)
         .metrics(Arc::new(LogMetrics::new()))
         .metrics_flush_interval(3)
-        .instruction(PumpfunDecoder, RayLaunchPadProcess)
+        .instruction(PumpfunDecoder, PumpfunProcess)
         .shutdown_strategy(carbon_core::pipeline::ShutdownStrategy::Immediate)
         .build()?
         .run()
@@ -127,10 +127,10 @@ pub async fn main() -> CarbonResult<()> {
     Ok(())
 }
 
-pub struct RayLaunchPadProcess;
+pub struct PumpfunProcess;
 
 #[async_trait]
-impl Processor for RayLaunchPadProcess {
+impl Processor for PumpfunProcess {
     type InputType = InstructionProcessorInputType<PumpfunInstruction>;
 
     async fn process(
