@@ -13,19 +13,23 @@ use {
     },
     carbon_log_metrics::LogMetrics,
     carbon_pumpfun_decoder::{
-        instructions::{buy::Buy, sell::Sell, trade_event::TradeEvent, PumpfunInstruction}, PumpfunDecoder, PROGRAM_ID as PUMPFUN_PROGRAM_ID
+        PROGRAM_ID as PUMPFUN_PROGRAM_ID, PumpfunDecoder,
+        instructions::{PumpfunInstruction, buy::Buy, sell::Sell, trade_event::TradeEvent},
     },
     carbon_yellowstone_grpc_datasource::YellowstoneGrpcGeyserClient,
     pumpfun_monitor::{
         config::{
-            init_jito, init_nozomi, init_zslot, BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY, RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT
+            BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY,
+            RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT, init_jito, init_nozomi, init_zslot,
         },
         instructions::{
             buy_ix::BuyExactInInstructionAccountsExt, sell_ix::SellExactInInstructionAccountsExt,
         },
         service::Tips,
         utils::{
-            blockhash::{get_slot, recent_blockhash_handler}, build_and_sign, sol_token_quote, token_sol_quote, TRADE_EVENT_DISC
+            TRADE_EVENT_DISC,
+            blockhash::{get_slot, recent_blockhash_handler},
+            build_and_sign, sol_token_quote, token_sol_quote,
         },
     },
     serde_json::json,
@@ -158,32 +162,31 @@ impl Processor for PumpfunProcess {
                         .meta
                         .inner_instructions
                         .as_ref()
-                        .and_then(|ixs| ixs.first())
-                        .map(|ix_group| {
-                            ix_group
-                                .instructions
-                                .iter()
-                                .filter_map(|inner_ix| {
-                                    let program_id_index =
-                                        inner_ix.instruction.program_id_index as usize;
-                                    let program_id = account_keys.get(program_id_index)?;
+                        .expect("missing inner_instructions")
+                        .iter()
+                        .flat_map(|ix_group| ix_group.instructions.iter())
+                        .filter(|inner_ix| {
+                            let program_id_index = inner_ix.instruction.program_id_index as usize;
+                            let program_id = account_keys
+                                .get(program_id_index)
+                                .expect("program id index out of bounds");
 
-                                    let first_account_index =
-                                        inner_ix.instruction.accounts.first()?;
-                                    let first_account =
-                                        account_keys.get(*first_account_index as usize)?;
+                            // Get the first account index
+                            let first_account_index_opt = inner_ix.instruction.accounts.first();
 
-                                    if *program_id == PUMPFUN_PROGRAM_ID
-                                        && *first_account == arranged.event_authority
-                                    {
-                                        Some(inner_ix)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
+                            if let Some(&first_account_index) = first_account_index_opt {
+                                let first_account = account_keys
+                                    .get(first_account_index as usize)
+                                    .expect("account index out of bounds");
+
+                                // Check the conditions
+                                *program_id == PUMPFUN_PROGRAM_ID
+                                    && *first_account == arranged.event_authority
+                            } else {
+                                false // no first account, so filter out
+                            }
                         })
-                        .unwrap_or_default();
+                        .collect();
 
                     let Some(swap_cpi_ix) = inner_ixs.first() else {
                         return Ok(()); // or Err(...) depending on your logic
@@ -310,7 +313,7 @@ impl Processor for PumpfunProcess {
                             false,
                         );
 
-                         let lamports_with_slippage =
+                        let lamports_with_slippage =
                             (*BUY_SOL_AMOUNT as f64 * 1.011 * (1.0 - *SLIPPAGE)) as u64;
 
                         println!("trade_event {:#?}", trade_event);
