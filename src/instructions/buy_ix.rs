@@ -1,5 +1,5 @@
 use carbon_pumpfun_decoder::instructions::buy::{Buy, BuyInstructionAccounts};
-use solana_sdk::instruction::{AccountMeta, Instruction};
+use solana_sdk::{instruction::{AccountMeta, Instruction}, pubkey::Pubkey};
 
 pub const EVENT_DISCRIMINATOR: [u8; 8] = [228, 69, 165, 46, 81, 203, 154, 29];
 
@@ -7,6 +7,8 @@ pub trait BuyExactInInstructionAccountsExt {
     fn get_buy_ix(&self, buy_exact_in_param: Buy) -> Instruction;
     fn get_create_idempotent_ata_ix(&self) -> Instruction;
     fn get_create_ata_ix(&self) -> Instruction;
+    fn global_volume_accumulator_pda() -> Pubkey;
+    fn user_volume_accumulator_pda(user: &Pubkey) -> Pubkey;
 }
 
 impl BuyExactInInstructionAccountsExt for BuyInstructionAccounts {
@@ -42,6 +44,9 @@ impl BuyExactInInstructionAccountsExt for BuyInstructionAccounts {
         data.extend_from_slice(&buy_exact_in_param.amount.to_le_bytes());
         data.extend_from_slice(&buy_exact_in_param.max_sol_cost.to_le_bytes());
 
+        let global_volume_accumulator = Self::global_volume_accumulator_pda();
+        let user_volume_accumulator = Self::user_volume_accumulator_pda(&self.user);
+
         // Then encode the struct fields using Borsh
 
         let accounts = vec![
@@ -57,6 +62,8 @@ impl BuyExactInInstructionAccountsExt for BuyInstructionAccounts {
             AccountMeta::new(self.creator_vault, false),
             AccountMeta::new_readonly(self.event_authority, false),
             AccountMeta::new_readonly(self.program, false),
+            AccountMeta::new(global_volume_accumulator, false),
+            AccountMeta::new(user_volume_accumulator, false),
         ];
 
         Instruction {
@@ -64,5 +71,22 @@ impl BuyExactInInstructionAccountsExt for BuyInstructionAccounts {
             accounts,
             data,
         }
+    }
+
+    // Pump program
+    fn global_volume_accumulator_pda() -> Pubkey {
+        let (global_volume_accumulator, _bump) = Pubkey::find_program_address(
+            &[b"global_volume_accumulator"],
+            &Pubkey::from_str_const("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+        );
+        global_volume_accumulator
+    }
+
+    fn user_volume_accumulator_pda(user: &Pubkey) -> Pubkey {
+        let (user_volume_accumulator, _bump) = Pubkey::find_program_address(
+            &[b"user_volume_accumulator", user.as_ref()],
+            &Pubkey::from_str_const("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+        );
+        user_volume_accumulator
     }
 }
