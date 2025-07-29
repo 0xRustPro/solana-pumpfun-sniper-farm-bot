@@ -1,7 +1,5 @@
 use {
-    async_trait::async_trait,
-    borsh::BorshDeserialize,
-    carbon_core::{
+    async_trait::async_trait, borsh::BorshDeserialize, carbon_core::{
         deserialize::{ArrangeAccounts, CarbonDeserialize},
         error::CarbonResult,
         instruction::{
@@ -10,43 +8,28 @@ use {
         },
         metrics::MetricsCollection,
         processor::Processor,
-    },
-    carbon_log_metrics::LogMetrics,
-    carbon_pumpfun_decoder::{
-        PROGRAM_ID as PUMPFUN_PROGRAM_ID, PumpfunDecoder,
-        instructions::{PumpfunInstruction, buy::Buy, sell::Sell, trade_event::TradeEvent},
-    },
-    carbon_yellowstone_grpc_datasource::YellowstoneGrpcGeyserClient,
-    pumpfun_monitor::{
+    }, carbon_log_metrics::LogMetrics, carbon_pumpfun_decoder::{
+        instructions::{buy::Buy, sell::Sell, trade_event::TradeEvent, PumpfunInstruction}, PumpfunDecoder, PROGRAM_ID as PUMPFUN_PROGRAM_ID
+    }, carbon_yellowstone_grpc_datasource::YellowstoneGrpcGeyserClient, once_cell::sync::Lazy, pumpfun_monitor::{
         config::{
-            BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY,
-            RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT, init_jito, init_nozomi, init_zslot,
+            init_jito, init_nozomi, init_zslot, BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY, RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT
         },
         instructions::{
             buy_ix::BuyExactInInstructionAccountsExt, sell_ix::SellExactInInstructionAccountsExt,
         },
         service::Tips,
         utils::{
-            TRADE_EVENT_DISC,
-            blockhash::{get_slot, recent_blockhash_handler},
-            build_and_sign, sol_token_quote, token_sol_quote,
+            blockhash::{get_slot, recent_blockhash_handler}, build_and_sign, sol_token_quote, token_sol_quote, TRADE_EVENT_DISC
         },
-    },
-    serde_json::json,
-    solana_sdk::commitment_config::CommitmentConfig,
-    solana_transaction_status_client_types::InnerInstruction,
-    spl_associated_token_account::{
+    }, serde_json::json, solana_sdk::commitment_config::CommitmentConfig, solana_transaction_status_client_types::InnerInstruction, spl_associated_token_account::{
         get_associated_token_address, instruction::create_associated_token_account_idempotent,
-    },
-    std::{
+    }, std::{
         collections::{HashMap, HashSet},
         env,
-        sync::Arc,
-    },
-    tokio::sync::RwLock,
-    yellowstone_grpc_proto::geyser::{
+        sync::Arc, time::Duration,
+    }, tokio::{sync::RwLock, time::sleep}, yellowstone_grpc_proto::geyser::{
         CommitmentLevel, SubscribeRequestFilterAccounts, SubscribeRequestFilterTransactions,
-    },
+    }
 };
 
 #[tokio::main]
@@ -133,6 +116,8 @@ pub async fn main() -> CarbonResult<()> {
 
 pub struct PumpfunProcess;
 
+pub static SIGNATURES: Lazy<RwLock<HashSet<String>>> = Lazy::new(|| RwLock::new(HashSet::new()));
+
 #[async_trait]
 impl Processor for PumpfunProcess {
     type InputType = InstructionProcessorInputType<PumpfunInstruction>;
@@ -151,6 +136,23 @@ impl Processor for PumpfunProcess {
         let raw_instructions = match instruction.data {
             PumpfunInstruction::Buy(buy_data) => {
                 println!("signature {:#?}", signature);
+                
+                // Check checking signature period
+                let start = std::time::Instant::now();
+                
+                if SIGNATURES.read().await.contains(&signature.to_string()) {
+                    println!("Signature {} already processed, skipping...", signature);
+                    return Ok(());
+                } else {
+                    SIGNATURES.write().await.insert(signature.to_string());
+                }
+                // Spawn a task to remove the signature after 3 seconds
+                tokio::spawn(async move {
+                    sleep(Duration::from_secs(3)).await;
+                    SIGNATURES.write().await.remove(&signature.to_string());
+                });
+
+                println!("Checking signature took: {:?}", start.elapsed());
 
                 if let Some(mut arranged) = Buy::arrange_accounts(&instruction_clone.accounts) {
                     arranged.user = *PUBKEY;
@@ -211,8 +213,6 @@ impl Processor for PumpfunProcess {
                         let lamports_with_slippage =
                             (*BUY_SOL_AMOUNT as f64 * 1.011 * (1.0 + *SLIPPAGE)) as u64;
 
-                        println!("trade_event {:#?}", trade_event);
-
                         let create_ata_ix = arranged.get_create_idempotent_ata_ix();
 
                         let buy_ix = arranged.get_buy_ix(Buy {
@@ -232,6 +232,23 @@ impl Processor for PumpfunProcess {
             }
             PumpfunInstruction::Sell(sell_data) => {
                 println!("{:#?}", signature);
+
+                // Check checking signature period
+                let start = std::time::Instant::now();
+                
+                if SIGNATURES.read().await.contains(&signature.to_string()) {
+                    println!("Signature {} already processed, skipping...", signature);
+                    return Ok(());
+                } else {
+                    SIGNATURES.write().await.insert(signature.to_string());
+                }
+                // Spawn a task to remove the signature after 3 seconds
+                tokio::spawn(async move {
+                    sleep(Duration::from_secs(3)).await;
+                    SIGNATURES.write().await.remove(&signature.to_string());
+                });
+
+                println!("Checking signature took: {:?}", start.elapsed());
 
                 if let Some(mut arranged) = Sell::arrange_accounts(&instruction_clone.accounts) {
                     arranged.user = *PUBKEY;
@@ -315,8 +332,6 @@ impl Processor for PumpfunProcess {
 
                         let lamports_with_slippage =
                             (*BUY_SOL_AMOUNT as f64 * 1.011 * (1.0 - *SLIPPAGE)) as u64;
-
-                        println!("trade_event {:#?}", trade_event);
 
                         let sell_ix = arranged.get_sell_ix(Sell {
                             amount: token_amount,
