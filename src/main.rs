@@ -129,7 +129,15 @@ impl Processor for PumpfunProcess {
     ) -> CarbonResult<()> {
         let signature = metadata.transaction_metadata.signature;
 
-        let account_keys = metadata.transaction_metadata.message.static_account_keys();
+        let static_account_keys = metadata.transaction_metadata.message.static_account_keys();
+        let writable_account_keys = &metadata.transaction_metadata.meta.loaded_addresses.writable;
+        let readonly_account_keys = &metadata.transaction_metadata.meta.loaded_addresses.readonly;
+
+        let mut account_keys: Vec<solana_sdk::pubkey::Pubkey> = vec![];
+
+        account_keys.extend(static_account_keys);
+        account_keys.extend(writable_account_keys);
+        account_keys.extend(readonly_account_keys);
 
         let instruction_clone: DecodedInstruction<PumpfunInstruction> = instruction.clone();
 
