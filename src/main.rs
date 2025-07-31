@@ -10,7 +10,7 @@ use {
         processor::Processor,
     }, carbon_log_metrics::LogMetrics, carbon_pumpfun_decoder::{
         instructions::{buy::Buy, sell::Sell, trade_event::TradeEvent, PumpfunInstruction}, PumpfunDecoder, PROGRAM_ID as PUMPFUN_PROGRAM_ID
-    }, carbon_yellowstone_grpc_datasource::YellowstoneGrpcGeyserClient, once_cell::sync::Lazy, pumpfun_monitor::{
+    }, carbon_yellowstone_grpc_datasource::YellowstoneGrpcGeyserClient, chrono::Utc, once_cell::sync::Lazy, pumpfun_monitor::{
         config::{
             init_jito, init_nozomi, init_zslot, BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY, RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT
         },
@@ -140,14 +140,12 @@ impl Processor for PumpfunProcess {
         account_keys.extend(readonly_account_keys);
 
         let instruction_clone: DecodedInstruction<PumpfunInstruction> = instruction.clone();
+        
+        let start = std::time::Instant::now();
 
         let raw_instructions = match instruction.data {
             PumpfunInstruction::Buy(buy_data) => {
-                println!("signature {:#?}", signature);
-                
                 // Check checking signature period
-                let start = std::time::Instant::now();
-                
                 if SIGNATURES.read().await.contains(&signature.to_string()) {
                     println!("Signature {} already processed, skipping...", signature);
                     return Ok(());
@@ -159,8 +157,8 @@ impl Processor for PumpfunProcess {
                     sleep(Duration::from_secs(3)).await;
                     SIGNATURES.write().await.remove(&signature.to_string());
                 });
-
-                println!("Checking signature took: {:?}", start.elapsed());
+                // Print siganure with timestamp
+                println!("Received target's signature : {:#?}\nCurrent time : {:#?}", signature, Utc::now());
 
                 if let Some(mut arranged) = Buy::arrange_accounts(&instruction_clone.accounts) {
                     arranged.user = *PUBKEY;
@@ -239,10 +237,6 @@ impl Processor for PumpfunProcess {
                 }
             }
             PumpfunInstruction::Sell(sell_data) => {
-                println!("{:#?}", signature);
-
-                // Check checking signature period
-                let start = std::time::Instant::now();
                 
                 if SIGNATURES.read().await.contains(&signature.to_string()) {
                     println!("Signature {} already processed, skipping...", signature);
@@ -255,15 +249,13 @@ impl Processor for PumpfunProcess {
                     sleep(Duration::from_secs(3)).await;
                     SIGNATURES.write().await.remove(&signature.to_string());
                 });
-
-                println!("Checking signature took: {:?}", start.elapsed());
+                // Print siganure with timestamp
+                println!("Received target's signature : {:#?}\nCurrent time : {:#?}", signature, Utc::now());
 
                 if let Some(mut arranged) = Sell::arrange_accounts(&instruction_clone.accounts) {
                     arranged.user = *PUBKEY;
                     arranged.associated_user =
                         get_associated_token_address(&PUBKEY, &arranged.mint);
-
-                    println!("{:#?}", account_keys);
 
                     let inner_ixs: Vec<&InnerInstruction> = metadata
                         .transaction_metadata
@@ -366,6 +358,9 @@ impl Processor for PumpfunProcess {
         if !raw_instructions.is_empty() {
             let (cu, priority_fee_micro_lamport, third_party_fee) = *PRIORITY_FEE;
 
+            // Print current timestamp and consumed time from start
+            println!("Submitting tx --> Current time: {:#?}\nPeriod from start: {:?}", Utc::now(), start.elapsed());
+
             let results = match CONFIRM_SERVICE.as_str() {
                 "NOZOMI" => {
                     let nozomi = NOZOMI_CLIENT.get().expect("Nozomi client not initialized");
@@ -441,7 +436,7 @@ impl Processor for PumpfunProcess {
                 }
             };
 
-            println!("TX HASH : {:#?}", results);
+            println!("Transaction confirmed --> : {:#?}\nCurrent time: {:#?}\nPeriod from start: {:?}", results, Utc::now(), start.elapsed());
         };
 
         Ok(())
