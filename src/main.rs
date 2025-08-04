@@ -262,32 +262,31 @@ impl Processor for PumpfunProcess {
                         .meta
                         .inner_instructions
                         .as_ref()
-                        .and_then(|ixs| ixs.first())
-                        .map(|ix_group| {
-                            ix_group
-                                .instructions
-                                .iter()
-                                .filter_map(|inner_ix| {
-                                    let program_id_index =
-                                        inner_ix.instruction.program_id_index as usize;
-                                    let program_id = account_keys.get(program_id_index)?;
+                        .expect("missing inner_instructions")
+                        .iter()
+                        .flat_map(|ix_group| ix_group.instructions.iter())
+                        .filter(|inner_ix| {
+                            let program_id_index = inner_ix.instruction.program_id_index as usize;
+                            let program_id = account_keys
+                                .get(program_id_index)
+                                .expect("program id index out of bounds");
 
-                                    let first_account_index =
-                                        inner_ix.instruction.accounts.first()?;
-                                    let first_account =
-                                        account_keys.get(*first_account_index as usize)?;
+                            // Get the first account index
+                            let first_account_index_opt = inner_ix.instruction.accounts.first();
 
-                                    if *program_id == PUMPFUN_PROGRAM_ID
-                                        && *first_account == arranged.event_authority
-                                    {
-                                        Some(inner_ix)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
+                            if let Some(&first_account_index) = first_account_index_opt {
+                                let first_account = account_keys
+                                    .get(first_account_index as usize)
+                                    .expect("account index out of bounds");
+
+                                // Check the conditions
+                                *program_id == PUMPFUN_PROGRAM_ID
+                                    && *first_account == arranged.event_authority
+                            } else {
+                                false // no first account, so filter out
+                            }
                         })
-                        .unwrap_or_default();
+                        .collect();
 
                     let Some(swap_cpi_ix) = inner_ixs.first() else {
                         return Ok(()); // or Err(...) depending on your logic
