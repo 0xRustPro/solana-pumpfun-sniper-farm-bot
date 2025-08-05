@@ -209,6 +209,10 @@ impl Processor for PumpfunProcess {
                             TradeEvent::try_from_slice(&swap_cpi_ix.instruction.data[16..])
                                 .expect("Failed to parse TradeEvent");
 
+                        println!("Target bought {} tokens by {} SOL",
+                                 trade_event.token_amount as f64 / 10f64.powf(6_f64),
+                                 trade_event.sol_amount as f64 / 10f64.powf(9_f64));
+
                         let required_token_amount = sol_token_quote(
                             *BUY_SOL_AMOUNT,
                             trade_event.virtual_sol_reserves,
@@ -300,6 +304,10 @@ impl Processor for PumpfunProcess {
                         let trade_event =
                             TradeEvent::try_from_slice(&swap_cpi_ix.instruction.data[16..])
                                 .expect("Failed to parse TradeEvent");
+
+                        println!("Target sold {} tokens for {} SOL",
+                                 trade_event.token_amount as f64 / 10f64.powf(6_f64),
+                                 trade_event.sol_amount as f64 / 10f64.powf(9_f64));
 
                         let token_balance = match RPC_CLIENT
                             .get_token_account_balance_with_commitment(
