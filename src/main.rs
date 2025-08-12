@@ -15,7 +15,7 @@ use {
             init_jito, init_nozomi, init_zslot, BUY_SOL_AMOUNT, CONFIRM_SERVICE, JITO_CLIENT, NOZOMI_CLIENT, PRIORITY_FEE, PUBKEY, RPC_CLIENT, SLIPPAGE, TARGET_WALLET, ZSLOT_CLIENT
         },
         instructions::{
-            buy_ix::BuyExactInInstructionAccountsExt, sell_ix::SellExactInInstructionAccountsExt,
+            buy_ix::BuyExactInInstructionAccountsExt, sell_ix::SellExactInInstructionAccountsExt, types::TradeEventTemp,
         },
         service::Tips,
         utils::{
@@ -206,7 +206,7 @@ impl Processor for PumpfunProcess {
                         .starts_with(&TradeEvent::DISCRIMINATOR)
                     {
                         let trade_event =
-                            TradeEvent::try_from_slice(&swap_cpi_ix.instruction.data[16..])
+                            TradeEventTemp::try_from_slice(&swap_cpi_ix.instruction.data[16..])
                                 .expect("Failed to parse TradeEvent");
 
                         println!("Target bought {} tokens by {} SOL",
@@ -302,7 +302,7 @@ impl Processor for PumpfunProcess {
                         .starts_with(&TradeEvent::DISCRIMINATOR)
                     {
                         let trade_event =
-                            TradeEvent::try_from_slice(&swap_cpi_ix.instruction.data[16..])
+                            TradeEventTemp::try_from_slice(&swap_cpi_ix.instruction.data[16..])
                                 .expect("Failed to parse TradeEvent");
 
                         println!("Target sold {} tokens for {} SOL",
