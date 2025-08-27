@@ -1,0 +1,333 @@
+use anyhow::{anyhow, Result};
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+};
+use spl_associated_token_account::{
+    get_associated_token_address,
+    instruction::create_associated_token_account_idempotent,
+};
+use solana_sdk::system_program;
+
+
+// PumpFun specific constants
+pub const PUMPFUN_PROGRAM: Pubkey = solana_sdk::pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+pub const PUMPFUN_GLOBAL: Pubkey = solana_sdk::pubkey!("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
+pub const PUMPFUN_MINT_AUTHORITY: Pubkey = solana_sdk::pubkey!("TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM");
+pub const METAPLEX_PROGRAM_ID: Pubkey = solana_sdk::pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+pub const PUMPFUN_FEE_RECIPIENT: Pubkey = solana_sdk::pubkey!("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM");
+pub const PUMPFUN_EVENT_AUTHORITY: Pubkey = solana_sdk::pubkey!("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
+
+
+
+// Initial reserves and supply
+pub const INITIAL_VIRTUAL_SOL_RESERVES: u64 = 29_998_065_120;
+pub const INITIAL_VIRTUAL_TOKEN_RESERVES: u64 = 73_000_000_000_000;
+
+#[derive(Debug)]
+pub struct TokenCreationParams {
+    pub deployer_keypair: Keypair,
+    pub token_mint_keypair: Keypair,
+    pub metadata_uri: String,
+    pub dev_buy_amount: f64,
+    pub token_name: String,
+    pub token_symbol: String,
+    pub token_description: String,
+}
+
+pub struct PumpFun;
+
+impl PumpFun {
+    // Creates token creation + buy instructions
+    pub fn get_create_buy_instruction(
+        params: &TokenCreationParams,
+    ) -> Result<Vec<Instruction>> {
+        println!("Building token creation + dev buy instructions...");
+        
+        let TokenCreationParams {
+            deployer_keypair,
+            token_mint_keypair,
+            metadata_uri,
+            dev_buy_amount,
+            token_name,
+            token_symbol,
+            token_description,
+        } = params;
+
+        let mint_pubkey = token_mint_keypair.pubkey();
+        let deployer_pubkey = deployer_keypair.pubkey();
+
+        println!("Mint Address: {}", mint_pubkey);
+        println!("Deployer Address: {}", deployer_pubkey);
+        println!("Dev Buy Amount: {} SOL", dev_buy_amount);
+
+        // Validate inputs
+        if token_name.is_empty() || token_symbol.is_empty() || metadata_uri.is_empty() {
+            return Err(anyhow!("Token name, symbol, and metadata URI cannot be empty"));
+        }
+
+        if *dev_buy_amount <= 0.0 {
+            return Err(anyhow!("Dev buy amount must be positive"));
+        }
+
+        println!("Calculating PDAs...");
+        let bonding_curve = get_pda(&mint_pubkey, &PUMPFUN_PROGRAM)?;
+        let (metadata_account, _) = Pubkey::find_program_address(
+            &[b"metadata", METAPLEX_PROGRAM_ID.as_ref(), mint_pubkey.as_ref()],
+            &METAPLEX_PROGRAM_ID,
+        );
+
+        let associated_bonding_curve = get_associated_token_address(&bonding_curve, &mint_pubkey);
+        let deployer_token_account = get_associated_token_address(&deployer_pubkey, &mint_pubkey);
+
+        println!("Bonding Curve: {}", bonding_curve);
+        println!("Associated Bonding Curve: {}", associated_bonding_curve);
+        println!("Metadata Account: {}", metadata_account);
+        println!("Deployer Token Account: {}", deployer_token_account);
+
+        // Build token data
+        println!("Building creation instruction data...");
+        let token_data = Self::build_create_instruction_data(
+            token_name,
+            token_symbol,
+            metadata_uri,
+            &deployer_pubkey,
+        )?;
+        println!("Creation instruction data built ({} bytes)", token_data.len());
+
+        // Create the token creation instruction
+        println!("Creating token creation instruction...");
+        let create_instruction = Instruction::new_with_bytes(
+            PUMPFUN_PROGRAM,
+            &token_data,
+            Self::get_create_instruction_accounts(
+                mint_pubkey,
+                bonding_curve,
+                associated_bonding_curve,
+                metadata_account,
+                deployer_pubkey,
+            )?,
+        );
+
+        // Create ATA instruction
+        println!("Creating ATA instruction...");
+        let ata_instruction = create_associated_token_account_idempotent(
+            &deployer_pubkey,
+            &deployer_pubkey,
+            &mint_pubkey,
+            &spl_token::id(),
+        );
+
+        // Create dev buy instruction
+        println!("Creating dev buy instruction...");
+        let buy_instruction = Self::create_dev_buy_instruction(
+            dev_buy_amount,
+            mint_pubkey,
+            bonding_curve,
+            associated_bonding_curve,
+            deployer_token_account,
+            deployer_pubkey,
+        )?;
+
+        println!("All instructions built successfully");
+        println!("Total instructions: 3 (Create + ATA + Dev Buy)");
+
+        Ok(vec![create_instruction, ata_instruction, buy_instruction])
+    }
+
+    // Gets accounts for create instruction
+    fn get_create_instruction_accounts(
+        mint_pubkey: Pubkey,
+        bonding_curve: Pubkey,
+        associated_bonding_curve: Pubkey,
+        metadata_account: Pubkey,
+        deployer_pubkey: Pubkey,
+    ) -> Result<Vec<AccountMeta>> {
+        //let event_authority = get_event_authority_pda()?;
+        println!("Event Authority: {}", PUMPFUN_EVENT_AUTHORITY);
+        
+        Ok(vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new_readonly(PUMPFUN_MINT_AUTHORITY, false),
+            AccountMeta::new(bonding_curve, false),
+            AccountMeta::new(associated_bonding_curve, false),
+            AccountMeta::new_readonly(PUMPFUN_GLOBAL, false),
+            AccountMeta::new_readonly(METAPLEX_PROGRAM_ID, false),
+            AccountMeta::new(metadata_account, false),
+            AccountMeta::new(deployer_pubkey, true),
+            AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+            AccountMeta::new_readonly(spl_associated_token_account::id(), false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::rent::id(), false),
+            AccountMeta::new_readonly(PUMPFUN_EVENT_AUTHORITY, false),
+            AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+        ])
+    }
+
+    // Creates dev buy instruction
+    fn create_dev_buy_instruction(
+        dev_buy_amount: &f64,
+        mint_pubkey: Pubkey,
+        bonding_curve: Pubkey,
+        associated_bonding_curve: Pubkey,
+        deployer_token_account: Pubkey,
+        deployer_pubkey: Pubkey,
+    ) -> Result<Instruction> {
+        println!("Calculating dev buy amounts...");
+        let buy_amount_lamports = (dev_buy_amount * 1_000_000_000.0) as u64;
+        println!("Buy amount in lamports: {}", buy_amount_lamports);
+        
+        let (tokens_to_receive, max_sol_cost, _) = Self::get_amount_out(
+            buy_amount_lamports,
+            INITIAL_VIRTUAL_SOL_RESERVES,
+            INITIAL_VIRTUAL_TOKEN_RESERVES,
+        );
+        println!("Tokens to receive: {}", tokens_to_receive);
+        println!("Max SOL cost: {}", max_sol_cost);
+        
+        let tokens_with_slippage = (tokens_to_receive * 85) / 100; // 15% slippage
+        println!("Tokens with slippage: {} (15% slippage)", tokens_with_slippage);
+
+        println!("Building dev buy instruction data...");
+        let buy_instruction_data = Self::build_buy_instruction_data(tokens_with_slippage, max_sol_cost);
+        println!("Buy instruction data built ({} bytes)", buy_instruction_data.len());
+        
+        let creator_vault = get_creator_vault_pda(&deployer_pubkey)?;
+        println!("Creator vault: {}", creator_vault);
+
+        println!("Creating dev buy instruction...");
+       // let event_authority = get_event_authority_pda()?;
+        let instruction = Instruction {
+            program_id: PUMPFUN_PROGRAM,
+            accounts: vec![
+                AccountMeta::new_readonly(PUMPFUN_GLOBAL, false),
+                AccountMeta::new(PUMPFUN_FEE_RECIPIENT, false),
+                AccountMeta::new(mint_pubkey, false),
+                AccountMeta::new(bonding_curve, false),
+                AccountMeta::new(associated_bonding_curve, false),
+                AccountMeta::new(deployer_token_account, false),
+                AccountMeta::new(deployer_pubkey, true),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new_readonly(spl_token::id(), false),
+                AccountMeta::new(creator_vault, false),
+                AccountMeta::new_readonly(PUMPFUN_EVENT_AUTHORITY, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+                AccountMeta::new(global_volume_accumulator_pda(), false),
+                AccountMeta::new(user_volume_accumulator_pda(&deployer_pubkey), false),
+            ],
+            data: buy_instruction_data,
+        };
+
+        println!("Dev buy instruction created successfully");
+        Ok(instruction)
+    }
+
+    // Builds token data for creation instruction  
+    fn build_create_instruction_data(
+        token_name: &str,
+        token_symbol: &str,
+        metadata_uri: &str,
+        deployer_pubkey: &Pubkey,
+    ) -> Result<Vec<u8>> {
+        let capacity = 8 + 4 + token_name.len() + 4 + token_symbol.len() + 4 + metadata_uri.len() + 32;
+        let mut token_data = Vec::with_capacity(capacity);
+        
+        // Add discriminator for "create" instruction
+        token_data.extend_from_slice(&[0x18, 0x1E, 0xC8, 0x28, 0x05, 0x1C, 0x07, 0x77]); // "create" + padding
+        
+        // Add name with length validation
+        if token_name.len() > u32::MAX as usize {
+            return Err(anyhow!("Token name too long"));
+        }
+        token_data.extend_from_slice(&(token_name.len() as u32).to_le_bytes());
+        token_data.extend_from_slice(token_name.as_bytes());
+        
+        // Add symbol with length validation
+        if token_symbol.len() > u32::MAX as usize {
+            return Err(anyhow!("Token symbol too long"));
+        }
+        token_data.extend_from_slice(&(token_symbol.len() as u32).to_le_bytes());
+        token_data.extend_from_slice(token_symbol.as_bytes());
+        
+        // Add URI with length validation
+        if metadata_uri.len() > u32::MAX as usize {
+            return Err(anyhow!("Metadata URI too long"));
+        }
+        token_data.extend_from_slice(&(metadata_uri.len() as u32).to_le_bytes());
+        token_data.extend_from_slice(metadata_uri.as_bytes());
+        
+        // Add creator pubkey
+        token_data.extend_from_slice(&deployer_pubkey.to_bytes());
+        
+        Ok(token_data)
+    }
+
+    // Builds buy instruction data
+    fn build_buy_instruction_data(tokens_with_slippage: u64, max_sol_cost: u64) -> Vec<u8> {
+        let mut buy_instruction_data = vec![
+            0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
+        
+        buy_instruction_data[8..16].copy_from_slice(&tokens_with_slippage.to_le_bytes());
+        buy_instruction_data[16..24].copy_from_slice(&max_sol_cost.to_le_bytes());
+        
+        buy_instruction_data
+    }
+
+    // Calculates amount out for bonding curve  
+    fn get_amount_out(
+        amount_in: u64,
+        virtual_sol_reserves: u64,
+        virtual_token_reserves: u64,
+    ) -> (u64, u64, u64) {
+        if virtual_sol_reserves == 0 {
+            return (0, amount_in, 0);
+        }
+
+        let tokens_out = (amount_in as u128)
+            .checked_mul(virtual_token_reserves as u128)
+            .and_then(|result| result.checked_div(virtual_sol_reserves as u128))
+            .unwrap_or(0) as u64;
+        
+        (tokens_out, amount_in, 0)
+    }
+}
+
+// Gets PDA for bonding curve  
+fn get_pda(mint: &Pubkey, program_id: &Pubkey) -> Result<Pubkey> {
+    let seeds = [b"bonding-curve".as_ref(), mint.as_ref()];
+    let (bonding_curve, _bump) = Pubkey::find_program_address(&seeds, program_id);
+    Ok(bonding_curve)
+}
+
+// Gets creator vault PDA  
+fn get_creator_vault_pda(creator: &Pubkey) -> Result<Pubkey> {
+    let seeds = [b"creator-vault".as_ref(), creator.as_ref()];
+    let (creator_vault, _bump) = Pubkey::find_program_address(&seeds, &PUMPFUN_PROGRAM);
+    Ok(creator_vault)
+}
+
+// Gets event authority PDA from mint
+fn get_event_authority_pda() -> Result<Pubkey> {
+    //let seeds = [b"event_authority".as_ref()];
+    let (event_authority, _bump) = Pubkey::find_program_address(&[b"event_authority"], &PUMPFUN_PROGRAM);
+    Ok(event_authority)
+}
+
+fn global_volume_accumulator_pda() -> Pubkey {
+    let (global_volume_accumulator, _bump) = Pubkey::find_program_address(
+        &[b"global_volume_accumulator"],
+        &Pubkey::from_str_const("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+    );
+    global_volume_accumulator
+}
+fn user_volume_accumulator_pda(user: &Pubkey) -> Pubkey {
+    let (user_volume_accumulator, _bump) = Pubkey::find_program_address(
+        &[b"user_volume_accumulator", user.as_ref()],
+        &Pubkey::from_str_const("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+    );
+    user_volume_accumulator
+}
