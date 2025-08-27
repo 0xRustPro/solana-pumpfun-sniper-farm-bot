@@ -137,13 +137,6 @@ src/
 - **Yellowstone gRPC** - Real-time transaction streaming
 - **PumpFun Decoder** - Protocol-specific instruction parsing
 
-## 🛡️ Security
-
-- **Private Key Management** - Supports multiple key formats (base58, JSON, base64)
-- **MEV Protection** - Uses multiple confirmation services
-- **Error Handling** - Comprehensive error handling and logging
-- **Resource Management** - Efficient memory usage with static variables
-
 ## 📊 Performance
 
 - **Sub-second Response** - Pre-created instructions for instant execution
@@ -151,28 +144,7 @@ src/
 - **High Throughput** - Async Rust for concurrent processing
 - **Memory Efficient** - Static variables for global state management
 
-## 🚨 Important Notes
-
-⚠️ **This bot is for educational purposes only**
-
-- Understand the risks of automated trading
-- Test thoroughly on devnet before mainnet
-- Monitor your wallet balance and transactions
-- Be aware of potential MEV attacks and slippage
-
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📞 Support
+## 📞 Support [https://t.me/Rust0x_726]
 
 For questions and support:
 - Open an issue on GitHub
